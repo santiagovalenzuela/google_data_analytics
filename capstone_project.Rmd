@@ -1,0 +1,198 @@
+---
+title: "Google Data Analytics Certification Capstone Project"
+author: "Santiago Valenzuela"
+date: "13/10/2021"
+output:
+  html_document:
+    toc: true
+---
+
+## Scenario
+
+Lily Moreno, director of marketing at Cyclistic (a bike-share company in
+Chicago), believes that maximizing the number of annual members will be the key to
+future growth. This is based on the findings of Cyclistic’s finance analysts,
+who have discovered that annual members are more profitable than casual riders.
+Annual members are customers who purchase annual memberships, while customers who
+purchase single-ride or full-day passes are defined as casual riders.
+
+Therefore, by understanding how casual riders and annual members use Cyclistic
+bikes differently, we could potentially increase the number of annual members, which would
+increase the rate of growth of the company.
+
+```{r setup, include=FALSE}
+# Set up the working directory
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preparing data
+For this project, we will be using R to prepare, process and analyze the data. First, we call the libraries we will be using.
+```{r, echo = T, warning=FALSE, results='hide'}
+library(data.table)
+library(knitr)
+library(lubridate)
+library(scales)
+library(tidyverse)
+```
+
+After downloading the data for the last 12 months from [here](https://divvy-tripdata.s3.amazonaws.com/index.html)^[The license for the use of this data can be found [here](https://www.divvybikes.com/data-license-agreement)], we save it into a folder called _project_data_, and we set up this folder as our working directory. Once we do this, we can start to clean our data.
+
+```{r results='hide'}
+# List the names of all the files we will be working with
+file_names <- list.files("project_data")
+file_locations <- paste0("project_data/", file_names)
+
+new_tbl_names <- paste0("trips_",substr(file_names, 1, 6))
+
+# Read all the files
+dfs <- lapply(file_locations, fread)
+```
+
+## Processing data
+
+Once we have the files saved and uploaded into R, we can bind them into a single dataframe and clean them. Before doing this, however, we need to check that every file has the same column names (so they can stack correctly.)
+
+```{r}
+column_names <- colnames(dfs[[1]])
+
+for(i in seq_along(dfs)){
+  print(i)
+  print(colnames(dfs[[i]]) %in% column_names) }
+```
+
+As we can see, the column names are the same for each file (otherwise, the word _FALSE_ would appear in the results). Once we have checked this, we bind all files into a single dataframe called _trips_. 
+```{r}
+trips <- rbindlist(dfs)
+```
+
+Now, we proceed to clean our data and check its quality. We can use the following code to see if there are any duplicated IDs.
+
+```{r}
+dim(trips)[1]-length(unique(trips$ride_id)) #This gives us the number of NON unique ride IDs
+```
+
+Even though they are supposed to be unique, there are several duplicated ids. Normally, we would get back with the stakeholders to check which ones are correct. However, since we do not have that option here, we exclude them from our analysis. 
+```{r results='hide'}
+duplicated_trips <- trips[duplicated(trips$ride_id) == T]
+trips <- anti_join(trips, duplicated_trips)
+```
+
+We now create a new column called _ride_length_, created by the difference of time between the start and the end of each trip:
+```{r}
+trips$ride_length <-difftime(trips$ended_at, trips$started_at)
+```
+
+There are, however, some trips whose duration is less than or equal to 0 seconds, which is impossible. We remove them.
+```{r}
+trips <- trips[!(trips$ride_length <= 0)]
+```
+
+Additionally, we remove trips that were used for testing. These can be identified because they start or end from station_id 676
+```{r}
+trips <- trips[!(trips$start_station_id == 676 | trips$end_station_id == 676)]
+```
+
+We convert _ride_length_ to a  numeric type to facilitate later transformations and analyses.
+```{r}
+trips$ride_length <- as.numeric(trips$ride_length)
+```
+
+One of the things we want to do in our analysis is check if there are differences in the use of bikes by day of the week. For this we need to create a new variable that would let us slice and dice our data by the day of the week. We'll call this new column _day_of_week_:
+
+```{r}
+trips$day_of_week <- format(trips$started_at, format="%u")
+```
+
+However, by taking a look at _day_of_week_ we can see that it is in a numeric format, where 1 is Monday, 2 is Tuesday, and so on. It can be a little difficult to see which day of the week each number refers to. To make this variable more readable and easier to understand, we change the values, store them in a new column called _wday_, convert them to factors, and order them in a proper way.
+
+```{r}
+# Convert day_of_week to string in a new column (Monday is 1)
+trips$wday <- trips$day_of_week
+
+trips$wday[trips$wday == 1] <- "Monday"
+trips$wday[trips$wday == 2] <- "Tuesday"
+trips$wday[trips$wday == 3] <- "Wednesday"
+trips$wday[trips$wday == 4] <- "Thursday"
+trips$wday[trips$wday == 5] <- "Friday"
+trips$wday[trips$wday == 6] <- "Saturday"
+trips$wday[trips$wday == 7] <- "Sunday"
+
+#Reorder wday as factor
+trips$wday <- factor(trips$wday, levels =c("Monday", "Tuesday", "Wednesday",
+                                           "Thursday", "Friday","Saturday",
+                                           "Sunday"))
+```
+
+## Analyzing data
+
+We now have cleaned and created all the variables needed to analyze our data. We start by comparing how trips vary between members and casual users using some summary statistics. 
+
+```{r}
+kable(aggregate(trips$ride_length ~ trips$member_casual, FUN = mean), caption = "Mean ride length")
+kable(aggregate(trips$ride_length ~ trips$member_casual, FUN = median), caption = "Median ride length")
+kable(aggregate(trips$ride_length ~ trips$member_casual, FUN = sd), caption = "Ride length standard deviation ")
+```
+
+The same data can be showed and summarized graphically:
+
+```{r echo=FALSE}
+trips %>%
+  slice_sample(n = 2000) %>%
+  ggplot(aes(member_casual, ride_length)) +
+  geom_boxplot(color = "#215a7d") +
+  labs(title = "How members and casual users differ in their ride length",
+       subtitle = "On average, casual users tend to ride for a longer time than annual members",
+       caption = "Source: Motivate International Inc.",
+       x = NULL,
+       y = "Length of ride \n(in seconds)") +
+  scale_y_log10(label = comma) +
+  theme_minimal() +
+  theme(plot.caption = element_text(face = "italic", hjust = 0),
+        plot.caption.position = "plot",
+        plot.title = element_text(color = "#215a7d"),
+        plot.title.position = "plot")
+```
+
+We now check how trips by weekday compare between members and casual users
+```{r echo=FALSE}
+kable(prop.table(table(trips$wday[trips$member_casual=="member"]))*100, caption = "Proportion of trips by weekday for annual members (%)")
+kable(prop.table(table(trips$wday[trips$member_casual=="casual"]))*100, caption = "Proportion of trips by weekday for casual riders (%)")
+```
+
+Finally, we see how the average ride time per day compares between members and casual users
+
+```{r echo = FALSE}
+
+day_avg <-aggregate(trips$ride_length ~ trips$member_casual + trips$wday,
+          FUN = mean) %>%
+  rename(wday = "trips$wday",
+         ride_length = "trips$ride_length",
+         rider_type = "trips$member_casual")
+day_avg %>%
+  ggplot(aes(wday, ride_length, group = rider_type)) +
+  geom_point(aes(color = rider_type)) +
+  geom_line(aes(color = rider_type)) +
+  labs(title= "Bike use by day",
+       caption = "Source: Motivate International Inc.",
+       color = "    Type of rider",
+       x = NULL,
+       y = "Average ride time \n(in seconds)") +
+  scale_color_manual(values = c("#215a7d", "#7d213e")) +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 2300)) +
+  guides(color = guide_legend(title.position = "top")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.caption= element_text(face= "italic", hjust = 0),
+        plot.caption.position = "plot",
+        plot.title = element_text(color = "#215a7d"),
+        plot.title.position = "plot")
+```
+
+## Conclusions
+
+Here are some key takeaways:
+ * Casual users tend to ride for a longer time than annual members
+ * The time casual users ride, however, is also more variable
+ * Casual users tend to ride more on weekends, while annual members' rides tend to be more "flat" throughout the week. It does, however, have a slight increase over the weekends.
+ 
+Based on these findings, I would recommend creating a membership program that rewarded casual riders by the length of time they rode. By focusing on the advantages that a membership offers to people who use intensively the service, the company could attract more people to sign in as members and take a ride to higher profits. 
